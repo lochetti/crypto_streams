@@ -6,22 +6,21 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Error, Message};
 use url::Url;
 
+use crate::proto;
+
 #[derive(Debug)]
 pub enum Msg {
-    Connect,
-    Disconnect,
+    Connect(mpsc::Sender<proto::OrderBook>),
 }
 
 pub async fn do_work(mut receiver: mpsc::Receiver<Msg>) -> Result<(), Error> {
-    let mut clients: u32 = 0;
+    let mut clients = Vec::new();
 
     //No connected client, yet
     while let Some(msg) = receiver.recv().await {
         match msg {
-            Msg::Connect => clients += 1,
-            Msg::Disconnect => {
-                println!("We don't have any connected clients to disconnect :(");
-                continue;
+            Msg::Connect(sender) => {
+                clients.push(sender);
             }
         }
 
@@ -43,14 +42,8 @@ pub async fn do_work(mut receiver: mpsc::Receiver<Msg>) -> Result<(), Error> {
                             println!("Received None from GRPC request");
                             return Ok(())
                         },
-                        Some(Msg::Connect) => {
-                            clients +=1;
-                        },
-                        Some(Msg::Disconnect) => {
-                            clients -=1;
-                            if clients == 0 {
-                                break;
-                            }
+                        Some(Msg::Connect(sender)) => {
+                            clients.push(sender);
                         }
                     }
 
@@ -67,9 +60,20 @@ pub async fn do_work(mut receiver: mpsc::Receiver<Msg>) -> Result<(), Error> {
                         }
                         Some(Ok(Message::Text(text))) => {
                             println!("Received: {}", text);
+                            for sender in &clients {
+                                sender.send(proto::OrderBook {
+                                    value: text.clone()
+                                }).await.unwrap();
+                            }
                         }
                         Some(Ok(Message::Binary(bytes))) => {
-                            println!("Received: {}", String::from_utf8(bytes).unwrap());
+                            let text = String::from_utf8(bytes).unwrap();
+                            println!("Received: {text}");
+                            for sender in &clients {
+                                sender.send(proto::OrderBook {
+                                    value: text.clone()
+                                }).await.unwrap();
+                            }
                         }
                         Some(Ok(Message::Ping(frame))) => {
                             socket.send(Message::Pong(frame)).await?;

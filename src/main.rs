@@ -1,29 +1,51 @@
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Receiver};
 
+use futures_util::{stream::BoxStream, Stream};
 use tokio_tungstenite::tungstenite::Error;
 use tonic::{Request, Response, Status};
 use worker::Msg;
 
+mod worker;
 mod proto {
     tonic::include_proto!("crypto_streams");
 }
-mod worker;
 
 struct Server {
     sender: mpsc::Sender<Msg>,
 }
 
+struct ReceiverStream<T> {
+    receiver: Receiver<T>,
+}
+
+impl<T> Stream for ReceiverStream<T> {
+    type Item = Result<T, Status>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.get_mut()
+            .receiver
+            .poll_recv(cx)
+            .map(|a| a.map(Result::Ok))
+    }
+}
+
 #[tonic::async_trait]
 impl proto::web_server::Web for Server {
-    async fn connect(&self, _request: Request<()>) -> Result<Response<()>, Status> {
+    type ConnectStream = BoxStream<'static, Result<proto::OrderBook, Status>>;
+    async fn connect(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<Self::ConnectStream>, Status> {
         println!("Connect called!");
-        self.sender.send(Msg::Connect).await.ok();
-        Ok(Response::new(()))
-    }
-    async fn disconnect(&self, _request: Request<()>) -> Result<Response<()>, Status> {
-        println!("Disconnect called!");
-        self.sender.send(Msg::Disconnect).await.ok();
-        Ok(Response::new(()))
+        let (sender, receiver) = mpsc::channel::<proto::OrderBook>(1);
+        self.sender.send(Msg::Connect(sender)).await.ok();
+
+        let stream = Box::pin(ReceiverStream { receiver });
+
+        Ok(Response::new(stream))
     }
 }
 

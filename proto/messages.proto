@@ -4,6 +4,9 @@ package crypto_streams;
 import "google/protobuf/empty.proto";
 
 service Web {
-    rpc Connect(google.protobuf.Empty) returns (google.protobuf.Empty);
-    rpc Disconnect(google.protobuf.Empty) returns (google.protobuf.Empty);
+    rpc Connect(google.protobuf.Empty) returns (stream OrderBook);
+}
+
+message OrderBook {
+    string value = 1;
 }
